@@ -27,3 +27,11 @@ class TaskService:
             return False
         await self.repo.delete(task)
         return True
+
+    async def toggle_task_status(self, user_id: int, task_id: int):
+        task = await self.task_repo.get_by_id(task_id)
+
+        if not task or task.user_id != user_id:
+            return None
+
+        return await self.task_repo.toggle_status(task)

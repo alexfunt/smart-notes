@@ -64,17 +64,27 @@ class NoteRepository:
         return note
 
     async def delete(self, note: Note) -> None:
+        user_id = note.user_id
+
         await self.db.delete(note)
         await self.db.commit()
 
-    async def get_by_user_note_number(self, user_id: int, user_note_number: int) -> Note | None:
+        await self.reorder_user_notes(user_id)
+
+    async def reorder_user_notes(self, user_id: int) -> None:
         result = await self.db.execute(
-            select(Note).where(
-                Note.user_id == user_id,
-                Note.user_note_number == user_note_number,
-            )
+            select(Note)
+            .where(Note.user_id == user_id)
+            .order_by(Note.created_at.asc())
         )
-        return result.scalar_one_or_none()
+
+        notes = list(result.scalars().all())
+
+        for index, note in enumerate(notes, start=1):
+            note.user_note_number = index
+
+        await self.db.commit()
+
 
     async def get_next_user_note_number(self, user_id: int) -> int:
         result = await self.db.execute(

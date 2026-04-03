@@ -6,15 +6,16 @@ from app.schemas.task import TaskCreate
 from app.schemas.telegram import TelegramAuthRequest, TelegramWebhookRequest
 from app.schemas.user import UserCreate
 
+
 class TelegramService:
     def __init__(
         self,
-        user_repo: UserRepository,
         note_repo: NoteRepository,
+        user_repo: UserRepository,
         task_repo: TaskRepository,
     ):
-        self.user_repo = user_repo
         self.note_repo = note_repo
+        self.user_repo = user_repo
         self.task_repo = task_repo
 
     @staticmethod
@@ -102,17 +103,29 @@ class TelegramService:
             return []
         return await self.note_repo.get_all_by_user_id(user.id)
 
+    async def get_user_note_details(self, telegram_id: int, user_note_number: int):
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        if not user:
+            return None
+
+        note = await self.note_repo.get_by_user_note_number(user.id, user_note_number)
+        if not note:
+            return None
+
+        tasks = await self.task_repo.get_all_by_note_id(note.id)
+        return note, tasks
+
     async def update_user_note(
         self,
         telegram_id: int,
-        note_id: int,
+        user_note_number: int,
         new_content: str,
     ):
         user = await self.user_repo.get_by_telegram_id(telegram_id)
         if not user:
             return None
 
-        note = await self.note_repo.get_by_id_and_user_id(note_id, user.id)
+        note = await self.note_repo.get_by_user_note_number(user.id, user_note_number)
         if not note:
             return None
 
@@ -124,14 +137,18 @@ class TelegramService:
             ),
         )
 
-    async def delete_user_note(self, telegram_id: int, note_id: int) -> bool:
+    async def delete_user_note(self, telegram_id: int, user_note_number: int) -> bool:
         user = await self.user_repo.get_by_telegram_id(telegram_id)
         if not user:
             return False
 
-        note = await self.note_repo.get_by_id_and_user_id(note_id, user.id)
+        note = await self.note_repo.get_by_user_note_number(user.id, user_note_number)
         if not note:
             return False
+
+        tasks = await self.task_repo.get_all_by_note_id(note.id)
+        if tasks:
+            await self.task_repo.delete_by_note_id(note.id)
 
         await self.note_repo.delete(note)
         return True
@@ -184,3 +201,18 @@ class TelegramService:
         )
 
         return task
+
+    async def toggle_task_status(self, telegram_id: int, task_id: int):
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        print("TOGGLE USER:", user.id if user else None)
+
+        if not user:
+            return None
+
+        task = await self.task_repo.get_by_id_and_user_id(task_id, user.id)
+        print("FOUND TASK:", task)
+
+        if not task:
+            return None
+
+        return await self.task_repo.toggle_status(task)

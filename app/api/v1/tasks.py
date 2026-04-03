@@ -9,9 +9,8 @@ from app.services.task_service import TaskService
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
-def get_task_service(db: AsyncSession = Depends(get_db)) -> TaskService:
-    repo = TaskRepository(db)
-    return TaskService(repo)
+def get_task_service(db: AsyncSession = Depends(get_db)) -> TaskRepository:
+    return TaskRepository(db)
 
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
@@ -23,8 +22,8 @@ async def create_task(
 
 
 @router.get("", response_model=list[TaskRead])
-async def get_tasks(service: TaskService = Depends(get_task_service)):
-    return await service.get_tasks()
+async def get_tasks(repo: TaskRepository = Depends(get_task_service)):
+    return await repo.get_all()
 
 
 @router.get("/{task_id}", response_model=TaskRead)

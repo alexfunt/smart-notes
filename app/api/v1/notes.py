@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.note_repo import NoteRepository
+from app.repositories.task_repo import TaskRepository
+from app.repositories.user_repo import UserRepository
 from app.schemas.note import NoteCreate, NoteRead, NoteUpdate
 from app.services.note_service import NoteService
 
@@ -10,9 +12,14 @@ router = APIRouter(prefix="/notes", tags=["Notes"])
 
 
 def get_note_service(db: AsyncSession = Depends(get_db)) -> NoteService:
-    repo = NoteRepository(db)
-    return NoteService(repo)
-
+    user_repo = UserRepository(db)
+    note_repo = NoteRepository(db)
+    task_repo = TaskRepository(db)
+    return NoteService(
+        note_repo=note_repo,
+        user_repo=user_repo,
+        task_repo=task_repo,
+    )
 
 @router.post("", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
 async def create_note(
@@ -49,7 +56,7 @@ async def update_note(
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(note_id: int, service: NoteService = Depends(get_note_service)):
-    deleted = await service.delete_note(note_id)
+    deleted = await service.delete_by_id(note_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found")
     return None

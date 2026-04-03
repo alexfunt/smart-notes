@@ -8,6 +8,7 @@ from app.repositories.user_repo import UserRepository
 from app.schemas.note import NoteRead, NoteWithTasksRead
 from app.schemas.task import TaskRead
 from app.schemas.telegram import TelegramWebhookRequest
+from app.services.note_service import NoteService
 from app.services.telegram_service import TelegramService
 
 router = APIRouter(prefix="/telegram", tags=["Telegram"])
@@ -17,9 +18,15 @@ def get_telegram_service(db: AsyncSession = Depends(get_db)) -> TelegramService:
     user_repo = UserRepository(db)
     note_repo = NoteRepository(db)
     task_repo = TaskRepository(db)
-    return TelegramService(
-        user_repo=user_repo,
+    note_service = NoteService(
         note_repo=note_repo,
+        user_repo=user_repo,
+        task_repo=task_repo,
+    )
+
+    return TelegramService(
+        note_repo=note_repo,
+        user_repo=user_repo,
         task_repo=task_repo,
     )
 
@@ -81,6 +88,20 @@ async def create_task_from_note(
     )
     if not task:
         raise HTTPException(status_code=404, detail="Note not found")
+
+    return task
+
+@router.patch("/users/{telegram_id}/tasks/{task_id}/toggle", response_model=TaskRead)
+async def toggle_task_status(
+    telegram_id: int,
+    task_id: int,
+    service: TelegramService = Depends(get_telegram_service),
+):
+    print("API TOGGLE:", telegram_id, task_id)
+
+    task = await service.toggle_task_status(telegram_id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
 
     return task
 

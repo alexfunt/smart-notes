@@ -38,5 +38,6 @@ class TaskRead(TaskBase):
     updated_at: datetime | None = None
     next_check_at: datetime | None = None
     engagement_score: float = 0.5
+    last_reminder_reply_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,12 @@ class Note(Base):
     note_type: Mapped[str] = mapped_column(String(50), default="plain", nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    #: 0..1: насколько тема (заметка) недавно «в фокусе» — для сортировки и убирания шума.
+    focus_score: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
+    last_focus_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

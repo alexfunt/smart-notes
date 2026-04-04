@@ -46,10 +46,10 @@ async def root():
 async def start_scheduler():
     startup_log = logging.getLogger(__name__)
     startup_log.info(
-        "APScheduler started (check_tasks every 1 min, TASK_REMINDER_INTERVAL_MINUTES=%s)",
+        "APScheduler started (check_tasks every 1440 min, TASK_REMINDER_INTERVAL_MINUTES=%s)",
         settings.TASK_REMINDER_INTERVAL_MINUTES,
     )
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_tasks, "interval", minutes=1)
+    scheduler.add_job(check_tasks, "interval", minutes=5)
     scheduler.start()
     app.state.scheduler = scheduler

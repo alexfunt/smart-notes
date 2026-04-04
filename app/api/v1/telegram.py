@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -49,9 +49,20 @@ async def get_user_notes(
 async def get_user_note_details(
     telegram_id: int,
     user_note_number: int,
+    focus: str | None = Query(
+        None,
+        description="Записать внимание к теме: note (открыли заметку) или task (открыли задачу)",
+    ),
     service: TelegramService = Depends(get_telegram_service),
 ):
-    result = await service.get_user_note_details(telegram_id, user_note_number)
+    if focus is not None and focus not in ("note", "task"):
+        raise HTTPException(
+            status_code=400,
+            detail="focus must be 'note' or 'task'",
+        )
+    result = await service.get_user_note_details(
+        telegram_id, user_note_number, focus=focus
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Note not found")
 
@@ -92,13 +103,26 @@ async def toggle_task_status(
     task_id: int,
     service: TelegramService = Depends(get_telegram_service),
 ):
-    print("API TOGGLE:", telegram_id, task_id)
-
     task = await service.toggle_task_status(telegram_id, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
     return task
+
+
+@router.delete(
+    "/users/{telegram_id}/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_user_task(
+    telegram_id: int,
+    task_id: int,
+    service: TelegramService = Depends(get_telegram_service),
+):
+    ok = await service.delete_user_task(telegram_id, task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/users/{telegram_id}/notes/{user_note_number}", response_model=NoteRead)

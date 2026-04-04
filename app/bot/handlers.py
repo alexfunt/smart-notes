@@ -1,8 +1,10 @@
+from datetime import datetime, timezone
+
 import httpx
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from app.bot.utils import parse_task_template
+from app.bot.utils import label_for_button, note_button_caption, parse_task_template
 
 from app.bot.client import BackendClient
 
@@ -17,6 +19,26 @@ async def _safe_backend_error(message, error: Exception) -> None:
         return
 
     await message.reply_text("Произошла ошибка при обращении к серверу.")
+
+def format_last_reminder_reply_at(raw: datetime | str | None) -> str | None:
+    """Дата и время последнего ответа реплаем на напоминание (UTC)."""
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        s = str(raw).strip()
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%d.%m.%Y %H:%M UTC")
+
 
 def format_task_status(status: str) -> str:
     mapping = {
@@ -52,13 +74,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
         await update.message.reply_text(
-            "Привет! Я бот для smart-заметок.\n\n"
-            "Что я умею сейчас:\n"
-            "/notes — показать мои заметки\n"
+            "Привет! Я бот для заметок и задач с упором на фокус.\n\n"
+            "Идея: вверху списка заметок — темы с большим числом задач и с развёрнутыми "
+            "ответами по ним (бот как раз об этом и спрашивает), плюс куда ты чаще заходишь. "
+            "Меньше шума — сначала живые темы.\n\n"
+            "/notes — заметки (сверху актуальные темы)\n"
+            "/note <номер> — открыть заметку текстом\n"
+            "/taskfromnote <номер> — добавить задачу к заметке\n"
             "/edit <id> новый текст — изменить заметку\n"
             "/delete <id> — удалить заметку\n"
             "/help — помощь\n\n"
-            "Просто пришли мне текст, и я сохраню его как заметку."
+            "Любое текстовое сообщение сохраню как новую заметку."
         )
     except Exception as e:
         await _safe_backend_error(update.message, e)
@@ -72,10 +98,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Доступные команды:\n"
         "/start — старт\n"
         "/help — помощь\n"
-        "/notes — мои заметки\n"
+        "/notes — заметки (сверху темы с задачами и развёрнутыми ответами)\n"
+        "/note <номер> — текст заметки и задачи\n"
+        "/taskfromnote <номер> — добавить задачу\n"
         "/edit <id> новый текст — изменить заметку\n"
         "/delete <id> — удалить заметку\n\n"
-        "Также можно просто отправить текстовое сообщение — оно сохранится как заметка."
+        "Текст без команды сохраняется как новая заметка."
     )
 
 
@@ -91,22 +119,19 @@ async def notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await update.message.reply_text("У вас пока нет заметок.")
             return
 
-        keyboard=[]    
+        keyboard = []
         for note in notes[:10]:
-            preview = note["content"][:35].replace("\n", " ")
-            if len(note["content"]) > 35:
-                preview += "..."
             keyboard.append([
                 InlineKeyboardButton(
-                    f"#{note['user_note_number']} — {preview}",
+                    note_button_caption(note),
                     callback_data=f"open_note:{note['user_note_number']}",
                 )
             ])
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "Ваши заметки:",
+            "Ваши заметки (сверху — темы с задачами и живыми ответами, затем остальное):",
             reply_markup=reply_markup,
         )
     except Exception as e:
@@ -136,7 +161,9 @@ async def open_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     try:
-        note = await client.get_user_note_details(user.id, note_number)
+        note = await client.get_user_note_details(
+            user.id, note_number, focus="task"
+        )
     except Exception as e:
         await _safe_backend_error(query.message, e)
         return
@@ -156,13 +183,19 @@ async def open_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     button_text = "↩ Снять выполнение" if task["status"] == "done" else "✅ Отметить выполненной"
 
     eng = float(task.get("engagement_score", 0.5))
+    reply_at = format_last_reminder_reply_at(task.get("last_reminder_reply_at"))
+    reply_line = (
+        f"Ответ на напоминание: {reply_at}"
+        if reply_at
+        else "Ответа реплаем на напоминание ещё не было."
+    )
     text = (
-        f"Задача #{task['user_task_number']}\n\n"
-        f"Название: {task['title']}\n"
+        f"{task['title']}\n\n"
         f"Описание: {description}\n"
         f"Состояние: {status_text}\n"
+        f"{reply_line}\n"
         f"Приоритет: {format_task_priority(task['priority'])} "
-        f"(вовлечённость {eng:.2f}, обновляется по ответам)"
+        f"(вовлечённость по ответам {eng:.2f} — влияет на место заметки в списке)"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -171,6 +204,15 @@ async def open_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 InlineKeyboardButton(
                     button_text,
                     callback_data=f"toggle_task:{note_number}:{task['id']}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 Удалить задачу",
+                    callback_data=(
+                        f"delete_task:{note_number}:{task['id']}:"
+                        f"{task['user_task_number']}"
+                    ),
                 )
             ],
             [
@@ -189,7 +231,9 @@ async def show_note(update, context, note_number: int):
     user = update.effective_user
 
     try:
-        note = await client.get_user_note_details(user.id, note_number)
+        note = await client.get_user_note_details(
+            user.id, note_number, focus="note"
+        )
     except Exception as e:
         await _safe_backend_error(query.message, e)
         return
@@ -217,7 +261,7 @@ async def show_note(update, context, note_number: int):
                     callback_data=f"toggle_task:{note_number}:{task['id']}",
                 ),
                 InlineKeyboardButton(
-                    f"Задача #{task['user_task_number']} — {task['title']}",
+                    label_for_button(task["title"]),
                     callback_data=f"open_task:{note_number}:{task['user_task_number']}",
                 )
             ])
@@ -294,18 +338,15 @@ async def back_to_notes_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         keyboard = []
         for note in notes[:10]:
-            preview = note["content"][:35].replace("\n", " ")
-            if len(note["content"]) > 35:
-                preview += "..."
             keyboard.append([
                 InlineKeyboardButton(
-                    f"#{note['user_note_number']} — {preview}",
+                    note_button_caption(note),
                     callback_data=f"open_note:{note['user_note_number']}",
                 )
             ])
 
         await query.edit_message_text(
-            "Ваши заметки:",
+            "Ваши заметки (сверху — темы с задачами и живыми ответами):",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     except Exception as e:
@@ -383,7 +424,9 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     try:
-        note = await client.get_user_note_details(user.id, note_number)
+        note = await client.get_user_note_details(
+            user.id, note_number, focus="note"
+        )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             await update.message.reply_text("Заметка не найдена.")
@@ -408,7 +451,7 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for task in tasks:
             eng = float(task.get("engagement_score", 0.5))
             lines.append(
-                f"• #{task['user_task_number']} — {task['title']} "
+                f"• {task['title']} "
                 f"[{task['status']}, {task['priority']}, вовл. {eng:.2f}]"
             )
 
@@ -472,9 +515,6 @@ async def delete_note_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
     except httpx.HTTPStatusError as e:
-        print("HTTP STATUS ERROR:", e.response.status_code)
-        print("RESPONSE TEXT:", e.response.text)
-
         if e.response.status_code == 404:
             await query.edit_message_text(
                 "Заметка не найдена или уже была удалена.",
@@ -492,7 +532,6 @@ async def delete_note_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
     except Exception as e:
-        print("UNEXPECTED DELETE ERROR:", repr(e))
         await _safe_backend_error(query.message, e)
 
 async def toggle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -504,8 +543,6 @@ async def toggle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await query.answer()
 
-    print("TOGGLE CALLBACK DATA:", query.data)
-
     try:
         _, note_number_str, task_id_str = query.data.split(":")
         note_number = int(note_number_str)
@@ -514,22 +551,117 @@ async def toggle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("Некорректные параметры задачи.")
         return
 
-    print("NOTE NUMBER:", note_number)
-    print("TASK ID:", task_id)
-
     try:
-        task = await client.toggle_task(user.id, task_id)
-        print("TOGGLE RESPONSE:", task)
-
+        await client.toggle_task(user.id, task_id)
         await show_note(update, context, note_number)
 
-    except httpx.HTTPStatusError as e:
-        print("TOGGLE HTTP STATUS:", e.response.status_code)
-        print("TOGGLE RESPONSE:", e.response.text)
+    except httpx.HTTPStatusError:
         await query.edit_message_text("Ошибка сервера при изменении статуса задачи.")
     except Exception as e:
-        print("TOGGLE ERROR:", repr(e))
-        await query.edit_message_text(f"Ошибка toggle: {e}")
+        await query.edit_message_text(f"Ошибка: {e}")
+
+
+async def delete_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+
+    await query.answer()
+
+    data = query.data or ""
+    if not data.startswith("delete_task:"):
+        return
+
+    parts = data.split(":")
+    if len(parts) != 4:
+        await query.edit_message_text("Некорректные параметры.")
+        return
+
+    try:
+        note_number = int(parts[1])
+        task_id = int(parts[2])
+        user_task_number = int(parts[3])
+    except ValueError:
+        await query.edit_message_text("Некорректные параметры.")
+        return
+
+    try:
+        note = await client.get_user_note_details(user.id, note_number)
+    except Exception as e:
+        await _safe_backend_error(query.message, e)
+        return
+
+    task = None
+    for item in note.get("tasks", []):
+        if item["id"] == task_id:
+            task = item
+            break
+
+    if not task:
+        await query.edit_message_text("Задача не найдена.")
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Да, удалить",
+                    callback_data=f"confirm_delete_task:{note_number}:{task_id}",
+                ),
+                InlineKeyboardButton(
+                    "Отмена",
+                    callback_data=f"open_task:{note_number}:{user_task_number}",
+                ),
+            ]
+        ]
+    )
+
+    await query.edit_message_text(
+        f"Удалить «{label_for_button(task['title'], 120)}»?\n\n"
+        "Действие нельзя отменить.",
+        reply_markup=keyboard,
+    )
+
+
+async def confirm_delete_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+
+    await query.answer()
+
+    data = query.data or ""
+    if not data.startswith("confirm_delete_task:"):
+        return
+
+    parts = data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("Некорректные параметры.")
+        return
+
+    try:
+        note_number = int(parts[1])
+        task_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("Некорректные параметры.")
+        return
+
+    try:
+        await client.delete_task(user.id, task_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            await query.edit_message_text("Задача не найдена или уже удалена.")
+            return
+        await query.edit_message_text("Ошибка сервера при удалении задачи.")
+        return
+    except Exception as e:
+        await query.edit_message_text(f"Ошибка: {e}")
+        return
+
+    await show_note(update, context, note_number)
+
 
 async def edit_note_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -583,7 +715,9 @@ async def task_from_note_command(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     try:
-        note = await client.get_user_note_details(user.id, note_number)
+        note = await client.get_user_note_details(
+            user.id, note_number, focus="note"
+        )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             await message.reply_text("Заметка не найдена.")
@@ -608,7 +742,7 @@ async def task_from_note_command(update: Update, context: ContextTypes.DEFAULT_T
     )
 
     await message.reply_text(
-        f"Вы выбрали заметку #{note_number}:\n"
+        f"Заметка «{note_button_caption(note, 60)}»:\n"
         f"{note['content'][:150]}\n\n"
         "Теперь пришлите задачу в формате:\n\n"
         "1 строка — название\n"
@@ -644,7 +778,9 @@ async def cancel_task_creation_callback(update: Update, context: ContextTypes.DE
     context.user_data.pop("task_from_note_number", None)
 
     try:
-        note = await client.get_user_note_details(user.id, note_number)
+        note = await client.get_user_note_details(
+            user.id, note_number, focus="note"
+        )
     except Exception as e:
         await _safe_backend_error(query.message, e)
         return
@@ -664,11 +800,16 @@ async def cancel_task_creation_callback(update: Update, context: ContextTypes.DE
         lines.append("Пока нет задач.")
     else:
         for task in tasks:
+            status_icon = "✅" if task["status"] == "done" else "⬜"
             keyboard.append([
                 InlineKeyboardButton(
-                    f"Задача #{task['user_task_number']} — {task['title']}",
+                    status_icon,
+                    callback_data=f"toggle_task:{note['user_note_number']}:{task['id']}",
+                ),
+                InlineKeyboardButton(
+                    label_for_button(task["title"]),
                     callback_data=f"open_task:{note['user_note_number']}:{task['user_task_number']}",
-                )
+                ),
             ])
 
     keyboard.append([
@@ -784,7 +925,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 ]
             )
             await message.reply_text(
-                f"Задача #{task['user_task_number']} сохранена и привязана к заметке #{pending_note_number}.",
+                f"Задача «{label_for_button(task['title'], 80)}» сохранена в заметке.",
                 reply_markup=keyboard,
             )
             return
@@ -825,17 +966,16 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         kind = saved.get("kind")
         if kind == "task_reminder_reply":
             title = saved.get("task_title") or "задача"
-            num = saved.get("user_task_number")
             await message.reply_text(
-                f"Записал ответ к задаче #{num}: «{title}»."
+                f"Записал ответ к «{label_for_button(title, 100)}». "
+                f"Чем подробнее ответы по теме, тем выше заметка в списке."
             )
             return
         if kind == "task_reminder_done":
             title = saved.get("task_title") or "задача"
-            num = saved.get("user_task_number")
             await message.reply_text(
-                f"Класс, отметил задачу #{num} «{title}» как выполненную. "
-                f"Так держать — если что, напишу снова по другим делам."
+                f"Отметил «{label_for_button(title, 100)}» выполненной. "
+                f"Если расскажешь, как всё прошло по заметке — это тоже поднимет тему в списке."
             )
             return
 

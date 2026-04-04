@@ -75,10 +75,17 @@ class BackendClient:
             response.raise_for_status()
             return response.json()
 
-    async def get_user_note_details(self, telegram_id: int, note_number: int) -> dict:
+    async def get_user_note_details(
+        self,
+        telegram_id: int,
+        note_number: int,
+        focus: str | None = None,
+    ) -> dict:
+        params = {"focus": focus} if focus else None
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.get(
-                f"{self.base_url}/telegram/users/{telegram_id}/notes/{note_number}"
+                f"{self.base_url}/telegram/users/{telegram_id}/notes/{note_number}",
+                params=params,
             )
             response.raise_for_status()
             return response.json()
@@ -128,9 +135,13 @@ class BackendClient:
     async def toggle_task(self, telegram_id: int, task_id: int) -> dict:
         async with httpx.AsyncClient(timeout=20.0) as client:
             url = f"{self.base_url}/telegram/users/{telegram_id}/tasks/{task_id}/toggle"
-            print("TOGGLE URL:", url)
             response = await client.patch(url)
-            print("TOGGLE STATUS:", response.status_code)
-            print("TOGGLE BODY:", response.text)
             response.raise_for_status()
             return response.json()
+
+    async def delete_task(self, telegram_id: int, task_id: int) -> None:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/telegram/users/{telegram_id}/tasks/{task_id}"
+            )
+            response.raise_for_status()

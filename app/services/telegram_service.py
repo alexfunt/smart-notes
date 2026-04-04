@@ -1,10 +1,24 @@
+from datetime import date, datetime, timezone
+
 from app.repositories.note_repo import NoteRepository
 from app.repositories.task_repo import TaskRepository
 from app.repositories.user_repo import UserRepository
+from app.utils.task_reminder_intent import is_task_done_acknowledgment
 from app.schemas.note import NoteCreate, NoteUpdate
 from app.schemas.task import TaskCreate
 from app.schemas.telegram import TelegramAuthRequest, TelegramWebhookRequest
 from app.schemas.user import UserCreate
+
+
+def _parse_due_date_text(due_date_text: str | None) -> datetime | None:
+    if not due_date_text:
+        return None
+    raw = due_date_text.strip()[:10]
+    try:
+        d = date.fromisoformat(raw)
+        return datetime(d.year, d.month, d.day, 12, 0, tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 class TelegramService:
@@ -71,6 +85,34 @@ class TelegramService:
             username=tg_user.username,
             full_name=full_name,
         )
+
+        if message.reply_to_message:
+            task = await self.task_repo.get_by_user_and_reminder_message_id(
+                user.id, message.reply_to_message.message_id
+            )
+            if task:
+                if is_task_done_acknowledgment(message.text):
+                    await self.task_repo.mark_done_from_reminder_reply(task)
+                    return {
+                        "status": "ok",
+                        "kind": "task_reminder_done",
+                        "task_id": task.id,
+                        "user_task_number": task.user_task_number,
+                        "task_title": task.title,
+                        "message": "Task marked done from reminder reply",
+                    }
+                await self.task_repo.append_reminder_reply(task, message.text)
+                await self.task_repo.apply_engagement_after_reminder_reply(
+                    task, message.text, datetime.now(timezone.utc)
+                )
+                return {
+                    "status": "ok",
+                    "kind": "task_reminder_reply",
+                    "task_id": task.id,
+                    "user_task_number": task.user_task_number,
+                    "task_title": task.title,
+                    "message": "Reply saved on task",
+                }
 
         note = await self.note_repo.create(
             NoteCreate(
@@ -172,7 +214,6 @@ class TelegramService:
         title: str,
         description: str | None,
         due_date_text: str | None,
-        priority: str,
     ):
         user = await self.user_repo.get_by_telegram_id(telegram_id)
         if not user:
@@ -186,15 +227,17 @@ class TelegramService:
         if due_date_text:
             full_description = f"{full_description}\nСрок: {due_date_text}".strip()
 
+        due_dt = _parse_due_date_text(due_date_text)
+
         task = await self.task_repo.create(
             TaskCreate(
                 user_id=user.id,
                 note_id=note.id,
                 title=title[:255],
                 description=full_description,
-                priority=priority,
+                priority="medium",
                 status="pending",
-                due_date=None,
+                due_date=due_dt,
                 ai_generated=False,
                 user_task_number=None,
             )

@@ -155,12 +155,14 @@ async def open_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     status_text = "выполнена" if task["status"] == "done" else "не выполнена"
     button_text = "↩ Снять выполнение" if task["status"] == "done" else "✅ Отметить выполненной"
 
+    eng = float(task.get("engagement_score", 0.5))
     text = (
         f"Задача #{task['user_task_number']}\n\n"
         f"Название: {task['title']}\n"
         f"Описание: {description}\n"
         f"Состояние: {status_text}\n"
-        f"Приоритет: {task['priority']}"
+        f"Приоритет: {format_task_priority(task['priority'])} "
+        f"(вовлечённость {eng:.2f}, обновляется по ответам)"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -349,13 +351,12 @@ async def note_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             "Пришлите данные в формате:\n\n"
             "1 строка — название\n"
             "2 строка — описание\n"
-            "3 строка — срок\n"
-            "4 строка — приоритет (low / medium / high)\n\n"
+            "3 строка — срок (завтра, сегодня или YYYY-MM-DD)\n\n"
+            "Приоритет подставится сам и будет уточняться по твоим ответам на напоминания.\n\n"
             "Пример:\n"
             "Сделать математику\n"
             "Упражнение 2\n"
-            "Завтра\n"
-            "high",
+            "Завтра",
             reply_markup=keyboard,
         )
         return
@@ -405,9 +406,10 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         lines.append("Пока нет задач.")
     else:
         for task in tasks:
+            eng = float(task.get("engagement_score", 0.5))
             lines.append(
                 f"• #{task['user_task_number']} — {task['title']} "
-                f"[{task['status']}, {task['priority']}]"
+                f"[{task['status']}, {task['priority']}, вовл. {eng:.2f}]"
             )
 
     lines.append("")
@@ -611,13 +613,12 @@ async def task_from_note_command(update: Update, context: ContextTypes.DEFAULT_T
         "Теперь пришлите задачу в формате:\n\n"
         "1 строка — название\n"
         "2 строка — описание\n"
-        "3 строка — срок\n"
-        "4 строка — приоритет (low / medium / high)\n\n"
+        "3 строка — срок (завтра, сегодня или YYYY-MM-DD)\n\n"
+        "Приоритет выставится автоматически и обновится по ответам на напоминания.\n\n"
         "Пример:\n"
         "Сделать математику\n"
         "Упражнение 2\n"
-        "Завтра\n"
-        "high",
+        "Завтра",
         reply_markup=keyboard,
     )
 
@@ -756,20 +757,11 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Используйте формат по строкам:\n"
                 "1 строка — название\n"
                 "2 строка — описание\n"
-                "3 строка — срок\n"
-                "4 строка — приоритет (low / medium / high)\n\n"
+                "3 строка — срок (завтра, сегодня или YYYY-MM-DD)\n\n"
                 "Пример:\n"
                 "Сделать математику\n"
                 "Упражнение 2\n"
-                "Завтра\n"
-                "high"
-            )
-            return
-
-        priority = parsed_task.get("priority", "medium")
-        if priority not in {"low", "medium", "high"}:
-            await message.reply_text(
-                "Приоритет должен быть одним из: low, medium, high."
+                "Завтра"
             )
             return
 
@@ -780,7 +772,6 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 title=parsed_task["title"],
                 description=parsed_task.get("description"),
                 due_date=parsed_task.get("due_date"),
-                priority=priority,
             )
 
             context.user_data.pop("task_from_note_number", None)
@@ -815,6 +806,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     
     try:
+        reply_to_id = (
+            message.reply_to_message.message_id if message.reply_to_message else None
+        )
         saved = await client.save_telegram_message(
             update_id=update.update_id,
             message_id=message.message_id,
@@ -825,7 +819,25 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_id=chat.id,
             chat_type=chat.type,
             text=message.text,
+            reply_to_message_id=reply_to_id,
         )
+
+        kind = saved.get("kind")
+        if kind == "task_reminder_reply":
+            title = saved.get("task_title") or "задача"
+            num = saved.get("user_task_number")
+            await message.reply_text(
+                f"Записал ответ к задаче #{num}: «{title}»."
+            )
+            return
+        if kind == "task_reminder_done":
+            title = saved.get("task_title") or "задача"
+            num = saved.get("user_task_number")
+            await message.reply_text(
+                f"Класс, отметил задачу #{num} «{title}» как выполненную. "
+                f"Так держать — если что, напишу снова по другим делам."
+            )
+            return
 
         note_number = saved["user_note_number"]
 

@@ -70,13 +70,9 @@ async def create_task_from_note(
     title = payload.get("title")
     description = payload.get("description")
     due_date_text = payload.get("due_date")
-    priority = payload.get("priority", "medium")
 
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
-
-    if priority not in {"low", "medium", "high"}:
-        raise HTTPException(status_code=400, detail="priority must be low, medium or high")
 
     task = await service.create_task_from_note(
         telegram_id=telegram_id,
@@ -84,7 +80,6 @@ async def create_task_from_note(
         title=title,
         description=description,
         due_date_text=due_date_text,
-        priority=priority,
     )
     if not task:
         raise HTTPException(status_code=404, detail="Note not found")

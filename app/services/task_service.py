@@ -29,9 +29,9 @@ class TaskService:
         return True
 
     async def toggle_task_status(self, user_id: int, task_id: int):
-        task = await self.task_repo.get_by_id(task_id)
+        task = await self.repo.get_by_id(task_id)
 
         if not task or task.user_id != user_id:
             return None
 
-        return await self.task_repo.toggle_status(task)
+        return await self.repo.toggle_status(task)

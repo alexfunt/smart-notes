@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class Task(Base):
@@ -20,6 +24,25 @@ class Task(Base):
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ai_generated: Mapped[bool] = mapped_column(default=False, nullable=False)
+    
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reminder_telegram_message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    overdue_escalation_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    #: 0..1: вовлечённость по ответам и сроку; для будущих AI-подсказок (порог в настройках).
+    engagement_score: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
+    last_user_engagement_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        insert_default=_utc_now,
+    )
+    last_reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

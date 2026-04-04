@@ -25,6 +25,9 @@ from app.bot.handlers import (
 )
 from app.core.config import settings
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.services.scheduler_service import check_tasks
+
 
 def main() -> None:
     if not settings.TELEGRAM_BOT_TOKEN:

@@ -36,27 +36,32 @@ class BackendClient:
         chat_id: int,
         chat_type: str,
         text: str,
+        reply_to_message_id: int | None = None,
     ) -> dict:
+        msg: dict = {
+            "message_id": message_id,
+            "from_user": {
+                "id": user_id,
+                "is_bot": False,
+                "first_name": first_name,
+                "last_name": last_name,
+                "username": username,
+            },
+            "chat": {
+                "id": chat_id,
+                "type": chat_type,
+            },
+            "text": text,
+        }
+        if reply_to_message_id is not None:
+            msg["reply_to_message"] = {"message_id": reply_to_message_id}
+
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
                 f"{self.base_url}/telegram/webhook",
                 json={
                     "update_id": update_id,
-                    "message": {
-                        "message_id": message_id,
-                        "from_user": {
-                            "id": user_id,
-                            "is_bot": False,
-                            "first_name": first_name,
-                            "last_name": last_name,
-                            "username": username,
-                        },
-                        "chat": {
-                            "id": chat_id,
-                            "type": chat_type,
-                        },
-                        "text": text,
-                    },
+                    "message": msg,
                 },
             )
             response.raise_for_status()
@@ -85,7 +90,6 @@ class BackendClient:
         title: str,
         description: str | None,
         due_date: str | None,
-        priority: str,
     ) -> dict:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
@@ -94,7 +98,6 @@ class BackendClient:
                     "title": title,
                     "description": description,
                     "due_date": due_date,
-                    "priority": priority,
                 },
             )
             response.raise_for_status()

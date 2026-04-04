@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class TelegramAuthRequest(BaseModel):
@@ -20,11 +20,20 @@ class TelegramChatInfo(BaseModel):
     type: str
 
 
+class TelegramReplyToMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    message_id: int
+
+
 class TelegramMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     message_id: int
     from_user: TelegramUserInfo
     chat: TelegramChatInfo
     text: str | None = None
+    reply_to_message: TelegramReplyToMessage | None = None
 
 
 class TelegramWebhookRequest(BaseModel):

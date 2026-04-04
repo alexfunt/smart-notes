@@ -16,6 +16,7 @@ class TaskCreate(TaskBase):
     user_id: int
     note_id: int | None = None
     user_task_number: int | None = None
+    next_check_at: datetime | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -35,5 +36,7 @@ class TaskRead(TaskBase):
     note_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    next_check_at: datetime | None = None
+    engagement_score: float = 0.5
 
     model_config = ConfigDict(from_attributes=True)

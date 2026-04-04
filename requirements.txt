@@ -10,3 +10,4 @@ python-dotenv
 python-telegram-bot
 httpx
 email-validator
+pyyaml

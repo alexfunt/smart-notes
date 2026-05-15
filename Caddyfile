@@ -1,0 +1,30 @@
+{
+	# Email для Let's Encrypt
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# Health-check API через /health (передаём на backend без префикса /api).
+	handle /health {
+		reverse_proxy backend:8000
+	}
+
+	# Все запросы к /api/* проксируются на FastAPI, префикс срезается.
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Всё остальное — статика SPA. Vite собирает в /dist.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

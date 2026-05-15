@@ -19,6 +19,13 @@ class Settings(BaseSettings):
 
     TELEGRAM_BOT_TOKEN: str = ""
     BACKEND_API_URL: str = "http://127.0.0.1:8000"
+    #: Публичный URL фронта. Бот шлёт его в кнопке /start. Для Telegram WebApp нужен HTTPS,
+    #: для локальной разработки пусть будет http://localhost:5173.
+    WEB_APP_URL: str = "http://localhost:5173"
+    #: CORS-источники для веб-фронта; запятая-разделитель. По умолчанию — локальный Vite.
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    #: initData считается просроченным после N секунд (Telegram рекомендует 86400).
+    WEBAPP_INITDATA_MAX_AGE: int = 86400
 
     #: Minutes until first/next reminder (default 1440 = 24h). Use 1 for local testing.
     TASK_REMINDER_INTERVAL_MINUTES: int = 1440

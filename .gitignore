@@ -1,7 +1,16 @@
 venv/
+.venv/
 .env
+.env.local
+.env.*.local
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
 .idea/
 .vscode/
 .DS_Store
+*.egg-info/
+graphify-out/
+node_modules/
+*.log

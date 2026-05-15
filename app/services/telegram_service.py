@@ -67,6 +67,28 @@ class TelegramService:
             full_name=data.full_name,
         )
 
+    async def auth_telegram_webapp(self, init_data: str):
+        """Проверяет initData (HMAC от bot_token) и возвращает пользователя.
+
+        Поднимает app.utils.telegram_webapp.WebAppAuthError при невалидной подписи.
+        """
+        from app.core.config import settings
+        from app.utils.telegram_webapp import verify_init_data
+
+        auth = verify_init_data(
+            init_data,
+            settings.TELEGRAM_BOT_TOKEN,
+            max_age_seconds=settings.WEBAPP_INITDATA_MAX_AGE,
+        )
+        full_name = " ".join(
+            part for part in [auth.user.first_name, auth.user.last_name] if part
+        ).strip() or None
+        return await self.get_or_create_user(
+            telegram_id=auth.user.id,
+            username=auth.user.username,
+            full_name=full_name,
+        )
+
     async def handle_webhook(self, payload: TelegramWebhookRequest) -> dict:
         if not payload.message:
             return {"status": "ignored", "reason": "no_message"}
@@ -161,6 +183,12 @@ class TelegramService:
         if not user:
             return []
         return await self.note_repo.get_all_by_user_id(user.id)
+
+    async def get_user_tasks(self, telegram_id: int):
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        if not user:
+            return []
+        return await self.task_repo.get_all_by_user_id(user.id)
 
     async def get_user_note_details(
         self,

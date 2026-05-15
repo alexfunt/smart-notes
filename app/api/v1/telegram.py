@@ -45,6 +45,14 @@ async def get_user_notes(
 ):
     return await service.get_user_notes(telegram_id)
 
+
+@router.get("/users/{telegram_id}/tasks", response_model=list[TaskRead])
+async def get_user_tasks(
+    telegram_id: int,
+    service: TelegramService = Depends(get_telegram_service),
+):
+    return await service.get_user_tasks(telegram_id)
+
 @router.get("/users/{telegram_id}/notes/{user_note_number}", response_model=NoteWithTasksRead)
 async def get_user_note_details(
     telegram_id: int,

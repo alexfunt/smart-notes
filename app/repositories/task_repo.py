@@ -55,13 +55,21 @@ class TaskRepository:
         )
         return list(result.scalars().all())
     
-    # async def get_all_by_user_id(self, user_id: int) -> list[Task]:
-    #     result = await self.db.execute(
-    #         select(Task)
-    #         .where(Task.user_id == user_id)
-    #         .order_by(Task.user_task_number.asc())
-    #     )
-    #     return list(result.scalars().all())
+    async def get_all_by_user_id(self, user_id: int) -> list[Task]:
+        result = await self.db.execute(
+            select(Task)
+            .where(Task.user_id == user_id)
+            .order_by(
+                case(
+                    (Task.status == "pending", 0),
+                    (Task.status == "done", 1),
+                    else_=2,
+                ),
+                Task.engagement_score.desc(),
+                Task.user_task_number.asc(),
+            )
+        )
+        return list(result.scalars().all())
 
     async def get_by_user_task_number(self, user_id: int, user_task_number: int) -> Task | None:
         result = await self.db.execute(

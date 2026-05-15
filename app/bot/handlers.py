@@ -1,24 +1,44 @@
+import logging
 from datetime import datetime, timezone
 
 import httpx
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from app.bot.utils import label_for_button, note_button_caption, parse_task_template
+from app.bot.utils import (
+    build_web_app_url,
+    label_for_button,
+    note_button_caption,
+    open_app_button,
+    parse_task_template,
+)
 
 from app.bot.client import BackendClient
+
+log = logging.getLogger("app.bot")
 
 client = BackendClient()
 
 
 async def _safe_backend_error(message, error: Exception) -> None:
+    log.exception("Bot handler error", exc_info=error)
     if isinstance(error, httpx.ConnectError):
         await message.reply_text(
             "Сервис временно недоступен. Попробуйте еще раз через минуту."
         )
         return
+    if isinstance(error, httpx.HTTPStatusError):
+        body = ""
+        try:
+            body = error.response.text[:200]
+        except Exception:
+            pass
+        await message.reply_text(
+            f"Сервер ответил {error.response.status_code}. {body}".strip()
+        )
+        return
 
-    await message.reply_text("Произошла ошибка при обращении к серверу.")
+    await message.reply_text(f"Произошла ошибка: {type(error).__name__}: {error}"[:300])
 
 def format_last_reminder_reply_at(raw: datetime | str | None) -> str | None:
     """Дата и время последнего ответа реплаем на напоминание (UTC)."""
@@ -73,37 +93,89 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             full_name=full_name,
         )
 
+        web_btn = open_app_button(user.id)
+        reply_markup = InlineKeyboardMarkup([[web_btn]]) if web_btn else None
+
         await update.message.reply_text(
             "Привет! Я бот для заметок и задач с упором на фокус.\n\n"
             "Идея: вверху списка заметок — темы с большим числом задач и с развёрнутыми "
             "ответами по ним (бот как раз об этом и спрашивает), плюс куда ты чаще заходишь. "
             "Меньше шума — сначала живые темы.\n\n"
+            "🌐 Веб-версия — кнопкой ниже или /app.\n\n"
             "/notes — заметки (сверху актуальные темы)\n"
             "/note <номер> — открыть заметку текстом\n"
             "/taskfromnote <номер> — добавить задачу к заметке\n"
             "/edit <id> новый текст — изменить заметку\n"
             "/delete <id> — удалить заметку\n"
+            "/app — открыть веб-версию\n"
             "/help — помощь\n\n"
-            "Любое текстовое сообщение сохраню как новую заметку."
+            "Любое текстовое сообщение сохраню как новую заметку.",
+            reply_markup=reply_markup,
         )
     except Exception as e:
         await _safe_backend_error(update.message, e)
 
 
+async def app_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not update.message or not user:
+        return
+
+    web_btn = open_app_button(user.id)
+    if not web_btn:
+        await update.message.reply_text("Веб-версия пока не настроена.")
+        return
+
+    await update.message.reply_text(
+        "Открыть веб-версию:",
+        reply_markup=InlineKeyboardMarkup([[web_btn]]),
+    )
+
+
+async def open_app_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик callback-кнопки «Открыть приложение» для http (localhost) сценария.
+
+    Telegram не разрешает http в url-кнопке, поэтому шлём ссылку текстом —
+    клиент автоматически делает её кликабельной.
+    """
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+
+    await query.answer()
+
+    url = build_web_app_url(user.id)
+    if not url:
+        await query.message.reply_text("Веб-версия пока не настроена.")
+        return
+
+    await query.message.reply_text(
+        f"🌐 Веб-версия:\n{url}\n\nID подхватится автоматически."
+    )
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
     if not update.message:
         return
+
+    tg_id = user.id if user else None
+    web_btn = open_app_button(tg_id)
+    reply_markup = InlineKeyboardMarkup([[web_btn]]) if web_btn else None
 
     await update.message.reply_text(
         "Доступные команды:\n"
         "/start — старт\n"
         "/help — помощь\n"
+        "/app — открыть веб-версию\n"
         "/notes — заметки (сверху темы с задачами и развёрнутыми ответами)\n"
         "/note <номер> — текст заметки и задачи\n"
         "/taskfromnote <номер> — добавить задачу\n"
         "/edit <id> новый текст — изменить заметку\n"
         "/delete <id> — удалить заметку\n\n"
-        "Текст без команды сохраняется как новая заметка."
+        "Текст без команды сохраняется как новая заметка.",
+        reply_markup=reply_markup,
     )
 
 
@@ -127,6 +199,10 @@ async def notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     callback_data=f"open_note:{note['user_note_number']}",
                 )
             ])
+
+        web_btn = open_app_button(user.id, label="🌐 Все заметки в вебе")
+        if web_btn:
+            keyboard.append([web_btn])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 

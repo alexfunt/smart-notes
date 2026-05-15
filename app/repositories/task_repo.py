@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate
+from app.services.task_engagement import reminder_delta_for_engagement
 
 
 class TaskRepository:
@@ -20,11 +21,12 @@ class TaskRepository:
         if "user_task_number" not in payload or payload["user_task_number"] is None:
             payload["user_task_number"] = await self.get_next_user_task_number(payload["user_id"])
 
-        if payload.get("next_check_at") is None:
-            payload["next_check_at"] = now + settings.task_reminder_delta()
-
         payload.setdefault("last_user_engagement_at", now)
         payload.setdefault("engagement_score", 0.5)
+
+        if payload.get("next_check_at") is None:
+            eng = float(payload.get("engagement_score", 0.5))
+            payload["next_check_at"] = now + reminder_delta_for_engagement(eng)
 
         task = Task(**payload)
         self.db.add(task)
@@ -53,13 +55,21 @@ class TaskRepository:
         )
         return list(result.scalars().all())
     
-    # async def get_all_by_user_id(self, user_id: int) -> list[Task]:
-    #     result = await self.db.execute(
-    #         select(Task)
-    #         .where(Task.user_id == user_id)
-    #         .order_by(Task.user_task_number.asc())
-    #     )
-    #     return list(result.scalars().all())
+    async def get_all_by_user_id(self, user_id: int) -> list[Task]:
+        result = await self.db.execute(
+            select(Task)
+            .where(Task.user_id == user_id)
+            .order_by(
+                case(
+                    (Task.status == "pending", 0),
+                    (Task.status == "done", 1),
+                    else_=2,
+                ),
+                Task.engagement_score.desc(),
+                Task.user_task_number.asc(),
+            )
+        )
+        return list(result.scalars().all())
 
     async def get_by_user_task_number(self, user_id: int, user_task_number: int) -> Task | None:
         result = await self.db.execute(
@@ -131,13 +141,18 @@ class TaskRepository:
     async def apply_engagement_after_reminder_reply(
         self, task: Task, reply_text: str, now: datetime
     ) -> Task:
-        from app.services.task_engagement import engagement_to_priority, score_reminder_reply
+        from app.services.task_engagement import (
+            blend_engagement_with_history,
+            engagement_to_priority,
+            score_reminder_reply,
+        )
 
         new = await score_reminder_reply(reply_text, task.due_date, now)
-        blended = max(0.0, min(1.0, 0.48 * task.engagement_score + 0.52 * new))
+        blended = blend_engagement_with_history(task.engagement_score, new)
         task.engagement_score = blended
         task.priority = engagement_to_priority(blended)
         task.last_user_engagement_at = now
+        task.last_reminder_reply_at = now
         await self.db.commit()
         await self.db.refresh(task)
         return task
@@ -162,6 +177,7 @@ class TaskRepository:
         task.engagement_score = max(task.engagement_score, 0.96)
         task.priority = "high"
         task.last_user_engagement_at = now
+        task.last_reminder_reply_at = now
         await self.db.commit()
         await self.db.refresh(task)
         return task

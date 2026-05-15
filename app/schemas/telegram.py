@@ -7,6 +7,10 @@ class TelegramAuthRequest(BaseModel):
     full_name: str | None = None
 
 
+class TelegramWebAppAuthRequest(BaseModel):
+    init_data: str
+
+
 class TelegramUserInfo(BaseModel):
     id: int
     is_bot: bool = False

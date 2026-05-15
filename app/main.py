@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.health import router as health_router
@@ -13,6 +14,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.scheduler_service import check_tasks
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+
+_cors_origins = [
+    origin.strip()
+    for origin in (settings.CORS_ORIGINS or "").split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins or ["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _configure_app_logging() -> None:
@@ -46,10 +60,10 @@ async def root():
 async def start_scheduler():
     startup_log = logging.getLogger(__name__)
     startup_log.info(
-        "APScheduler started (check_tasks every 1 min, TASK_REMINDER_INTERVAL_MINUTES=%s)",
+        "APScheduler started (check_tasks every 1440 min, TASK_REMINDER_INTERVAL_MINUTES=%s)",
         settings.TASK_REMINDER_INTERVAL_MINUTES,
     )
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_tasks, "interval", minutes=1)
+    scheduler.add_job(check_tasks, "interval", minutes=5)
     scheduler.start()
     app.state.scheduler = scheduler

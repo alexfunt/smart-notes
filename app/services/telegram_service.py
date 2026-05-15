@@ -8,6 +8,7 @@ from app.schemas.note import NoteCreate, NoteUpdate
 from app.schemas.task import TaskCreate
 from app.schemas.telegram import TelegramAuthRequest, TelegramWebhookRequest
 from app.schemas.user import UserCreate
+from app.services.note_focus import FocusEvent
 
 
 def _parse_due_date_text(due_date_text: str | None) -> datetime | None:
@@ -66,6 +67,28 @@ class TelegramService:
             full_name=data.full_name,
         )
 
+    async def auth_telegram_webapp(self, init_data: str):
+        """Проверяет initData (HMAC от bot_token) и возвращает пользователя.
+
+        Поднимает app.utils.telegram_webapp.WebAppAuthError при невалидной подписи.
+        """
+        from app.core.config import settings
+        from app.utils.telegram_webapp import verify_init_data
+
+        auth = verify_init_data(
+            init_data,
+            settings.TELEGRAM_BOT_TOKEN,
+            max_age_seconds=settings.WEBAPP_INITDATA_MAX_AGE,
+        )
+        full_name = " ".join(
+            part for part in [auth.user.first_name, auth.user.last_name] if part
+        ).strip() or None
+        return await self.get_or_create_user(
+            telegram_id=auth.user.id,
+            username=auth.user.username,
+            full_name=full_name,
+        )
+
     async def handle_webhook(self, payload: TelegramWebhookRequest) -> dict:
         if not payload.message:
             return {"status": "ignored", "reason": "no_message"}
@@ -93,6 +116,13 @@ class TelegramService:
             if task:
                 if is_task_done_acknowledgment(message.text):
                     await self.task_repo.mark_done_from_reminder_reply(task)
+                    now = datetime.now(timezone.utc)
+                    if task.note_id:
+                        n = await self.note_repo.get_by_id(task.note_id)
+                        if n:
+                            await self.note_repo.apply_focus_event(
+                                n, FocusEvent.TASK_DONE, now
+                            )
                     return {
                         "status": "ok",
                         "kind": "task_reminder_done",
@@ -102,9 +132,16 @@ class TelegramService:
                         "message": "Task marked done from reminder reply",
                     }
                 await self.task_repo.append_reminder_reply(task, message.text)
+                now = datetime.now(timezone.utc)
                 await self.task_repo.apply_engagement_after_reminder_reply(
-                    task, message.text, datetime.now(timezone.utc)
+                    task, message.text, now
                 )
+                if task.note_id:
+                    n = await self.note_repo.get_by_id(task.note_id)
+                    if n:
+                        await self.note_repo.apply_focus_event(
+                            n, FocusEvent.REMINDER_REPLY, now
+                        )
                 return {
                     "status": "ok",
                     "kind": "task_reminder_reply",
@@ -129,6 +166,8 @@ class TelegramService:
                 },
             )
         )
+        now = datetime.now(timezone.utc)
+        await self.note_repo.apply_focus_event(note, FocusEvent.NEW_NOTE, now)
 
         return {
             "status": "ok",
@@ -145,7 +184,18 @@ class TelegramService:
             return []
         return await self.note_repo.get_all_by_user_id(user.id)
 
-    async def get_user_note_details(self, telegram_id: int, user_note_number: int):
+    async def get_user_tasks(self, telegram_id: int):
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        if not user:
+            return []
+        return await self.task_repo.get_all_by_user_id(user.id)
+
+    async def get_user_note_details(
+        self,
+        telegram_id: int,
+        user_note_number: int,
+        focus: str | None = None,
+    ):
         user = await self.user_repo.get_by_telegram_id(telegram_id)
         if not user:
             return None
@@ -153,6 +203,16 @@ class TelegramService:
         note = await self.note_repo.get_by_user_note_number(user.id, user_note_number)
         if not note:
             return None
+
+        now = datetime.now(timezone.utc)
+        if focus == "note":
+            note = await self.note_repo.apply_focus_event(
+                note, FocusEvent.NOTE_OPEN, now
+            )
+        elif focus == "task":
+            note = await self.note_repo.apply_focus_event(
+                note, FocusEvent.TASK_OPEN, now
+            )
 
         tasks = await self.task_repo.get_all_by_note_id(note.id)
         return note, tasks
@@ -195,18 +255,6 @@ class TelegramService:
         await self.note_repo.delete(note)
         return True
 
-    async def get_user_note_details(self, telegram_id: int, user_note_number: int):
-        user = await self.user_repo.get_by_telegram_id(telegram_id)
-        if not user:
-            return None
-
-        note = await self.note_repo.get_by_user_note_number(user.id, user_note_number)
-        if not note:
-            return None
-
-        tasks = await self.task_repo.get_all_by_note_id(note.id)
-        return note, tasks
-
     async def create_task_from_note(
         self,
         telegram_id: int,
@@ -243,19 +291,37 @@ class TelegramService:
             )
         )
 
+        now = datetime.now(timezone.utc)
+        await self.note_repo.apply_focus_event(note, FocusEvent.TASK_CREATED, now)
+
         return task
 
     async def toggle_task_status(self, telegram_id: int, task_id: int):
         user = await self.user_repo.get_by_telegram_id(telegram_id)
-        print("TOGGLE USER:", user.id if user else None)
 
         if not user:
             return None
 
         task = await self.task_repo.get_by_id_and_user_id(task_id, user.id)
-        print("FOUND TASK:", task)
 
         if not task:
             return None
 
-        return await self.task_repo.toggle_status(task)
+        was_pending = task.status == "pending"
+        task = await self.task_repo.toggle_status(task)
+        now = datetime.now(timezone.utc)
+        if was_pending and task.status == "done" and task.note_id:
+            n = await self.note_repo.get_by_id(task.note_id)
+            if n:
+                await self.note_repo.apply_focus_event(n, FocusEvent.TASK_DONE, now)
+        return task
+
+    async def delete_user_task(self, telegram_id: int, task_id: int) -> bool:
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        if not user:
+            return False
+        task = await self.task_repo.get_by_id_and_user_id(task_id, user.id)
+        if not task:
+            return False
+        await self.task_repo.delete(task)
+        return True

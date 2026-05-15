@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  backend:
+    build: .
+    restart: always
+    env_file: .env
+    environment:
+      # Внутри docker сети — DNS-имя сервиса.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BACKEND_API_URL: http://backend:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+    expose:
+      - "8000"
+
+  bot:
+    build: .
+    restart: always
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BACKEND_API_URL: http://backend:8000
+    depends_on:
+      - backend
+    networks: [internal]
+    command: python -m app.bot.main
+
+  frontend-build:
+    build: ../smart-notes-frontend
+    restart: "no"
+    volumes:
+      - frontend_dist:/out
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    depends_on:
+      - backend
+      - frontend-build
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - frontend_dist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+
+volumes:
+  postgres_data:
+  frontend_dist:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

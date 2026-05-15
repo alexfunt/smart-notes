@@ -1,8 +1,12 @@
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.note import Note
+from app.models.task import Task
 from app.schemas.note import NoteCreate, NoteUpdate
+from app.services.note_focus import FocusEvent
 
 
 class NoteRepository:
@@ -25,13 +29,47 @@ class NoteRepository:
         result = await self.db.execute(select(Note).order_by(Note.id.desc()))
         return list(result.scalars().all())
 
-    async def get_all_by_user_id(self, user_id:int) -> list[Note]:
+    async def get_all_by_user_id(self, user_id: int) -> list[Note]:
+        """Сортировка: активные темы выше — по задачам, ответам и фокусу (без LLM)."""
+        task_agg = (
+            select(
+                Task.note_id.label("nid"),
+                func.count(Task.id).label("task_cnt"),
+                func.avg(Task.engagement_score).label("avg_eng"),
+                func.sum(case((Task.status == "done", 1), else_=0)).label("done_cnt"),
+            )
+            .where(Task.note_id.isnot(None))
+            .group_by(Task.note_id)
+        ).subquery()
+
+        list_rank = (
+            Note.focus_score * 0.30
+            + func.coalesce(task_agg.c.avg_eng, 0.5) * 0.42
+            + func.least(func.coalesce(task_agg.c.task_cnt, 0) / 8.0, 1.0) * 0.16
+            + func.least(func.coalesce(task_agg.c.done_cnt, 0) / 5.0, 1.0) * 0.12
+        )
+
         result = await self.db.execute(
             select(Note)
+            .outerjoin(task_agg, Note.id == task_agg.c.nid)
             .where(Note.user_id == user_id)
-            .order_by(Note.id.desc())
+            .order_by(list_rank.desc(), Note.updated_at.desc())
         )
         return list(result.scalars().all())
+
+    async def apply_focus_event(
+        self, note: Note, event: FocusEvent, now: datetime
+    ) -> Note:
+        from app.services.note_focus import apply_focus_delta
+
+        new_score, new_at = apply_focus_delta(
+            note.focus_score, note.last_focus_at, now, event
+        )
+        note.focus_score = new_score
+        note.last_focus_at = new_at
+        await self.db.commit()
+        await self.db.refresh(note)
+        return note
 
     async def get_by_id(self, note_id: int) -> Note | None:
         result = await self.db.execute(select(Note).where(Note.id == note_id))

@@ -31,6 +31,8 @@ class NoteRead(NoteBase):
     id: int
     user_id: int
     user_note_number: int
+    focus_score: float = 0.5
+    last_focus_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

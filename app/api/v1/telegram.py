@@ -105,6 +105,31 @@ async def create_task_from_note(
 
     return task
 
+@router.patch("/users/{telegram_id}/tasks/{task_id}", response_model=TaskRead)
+async def update_user_task(
+    telegram_id: int,
+    task_id: int,
+    payload: dict,
+    service: TelegramService = Depends(get_telegram_service),
+):
+    title = payload.get("title")
+    description = payload.get("description")
+    due_date_text = payload.get("due_date")
+    clear_due_date = "due_date" in payload and due_date_text in (None, "")
+
+    task = await service.update_user_task(
+        telegram_id=telegram_id,
+        task_id=task_id,
+        title=title,
+        description=description,
+        due_date_text=due_date_text if not clear_due_date else None,
+        clear_due_date=clear_due_date,
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
 @router.patch("/users/{telegram_id}/tasks/{task_id}/toggle", response_model=TaskRead)
 async def toggle_task_status(
     telegram_id: int,

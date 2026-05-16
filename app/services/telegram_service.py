@@ -271,10 +271,6 @@ class TelegramService:
         if not note:
             return None
 
-        full_description = description or ""
-        if due_date_text:
-            full_description = f"{full_description}\nСрок: {due_date_text}".strip()
-
         due_dt = _parse_due_date_text(due_date_text)
 
         task = await self.task_repo.create(
@@ -282,7 +278,7 @@ class TelegramService:
                 user_id=user.id,
                 note_id=note.id,
                 title=title[:255],
-                description=full_description,
+                description=description or "",
                 priority="medium",
                 status="pending",
                 due_date=due_dt,

@@ -316,6 +316,43 @@ class TelegramService:
                 await self.note_repo.apply_focus_event(n, FocusEvent.TASK_DONE, now)
         return task
 
+    async def update_user_task(
+        self,
+        telegram_id: int,
+        task_id: int,
+        title: str | None,
+        description: str | None,
+        due_date_text: str | None,
+        clear_due_date: bool,
+    ):
+        user = await self.user_repo.get_by_telegram_id(telegram_id)
+        if not user:
+            return None
+        task = await self.task_repo.get_by_id_and_user_id(task_id, user.id)
+        if not task:
+            return None
+
+        from app.schemas.task import TaskUpdate
+
+        update_fields: dict = {}
+        if title is not None:
+            stripped = title.strip()
+            if stripped:
+                update_fields["title"] = stripped[:255]
+        if description is not None:
+            update_fields["description"] = description
+        if clear_due_date:
+            update_fields["due_date"] = None
+        elif due_date_text is not None:
+            parsed = _parse_due_date_text(due_date_text)
+            if parsed is not None:
+                update_fields["due_date"] = parsed
+
+        if not update_fields:
+            return task
+
+        return await self.task_repo.update(task, TaskUpdate(**update_fields))
+
     async def delete_user_task(self, telegram_id: int, task_id: int) -> bool:
         user = await self.user_repo.get_by_telegram_id(telegram_id)
         if not user:

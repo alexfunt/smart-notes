@@ -479,10 +479,8 @@ async def note_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if action == "later":
-        await query.edit_message_text(
-            f"Хорошо, заметка #{note_number} сохранена.\n"
-            f"Позже можно вернуться через команду /taskfromnote {note_number}"
-        )
+        await back_to_notes_callback(update, context)
+        return
 
 async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
